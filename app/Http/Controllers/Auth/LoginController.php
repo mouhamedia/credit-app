@@ -1,9 +1,11 @@
 <?php
+
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use App\Models\User;
 
 class LoginController extends Controller
 {
@@ -14,32 +16,38 @@ class LoginController extends Controller
 
     public function login(Request $request)
     {
-        $credentials = $request->only('email', 'password');
+        $credentials = $request->validate([
+            'email' => ['required','email'],
+            'password' => ['required'],
+        ]);
 
-        if (Auth::attempt($credentials)) {
-            $user = Auth::user();
-
-            // Vérifier si l'utilisateur est actif ou si abonnement payé
-            if ($user->role === 'boutiquier' && $user->status != 1) {
-                Auth::logout();
-                return redirect()->back()->withErrors([
-                    'email' => 'Votre compte est inactif. Veuillez régler l’abonnement.',
-                ]);
-            }
-
-            // Redirection selon le rôle
-            if ($user->role === 'admin') {
-                return redirect()->route('admin.dashboard');
-            } elseif ($user->role === 'boutiquier') {
-                return redirect()->route('boutiquier.dashboard');
-            }
-
-            return redirect('/'); // fallback
+        if (!Auth::attempt($credentials)) {
+            return back()->withErrors([
+                'email' => 'Email ou mot de passe incorrect.',
+            ])->withInput();
         }
 
-        return redirect()->back()->withErrors([
-            'email' => 'Email ou mot de passe incorrect',
-        ]);
+        /** @var User $user */
+        $user = Auth::user();
+
+        // ---- Vérifier si le boutiquier est actif ----
+        if ($user->role === 'boutiquier' && $user->status != 1) {
+            Auth::logout();
+            return back()->withErrors([
+                'email' => "Votre compte est inactif. Veuillez régler l'abonnement.",
+            ]);
+        }
+
+        // ---- Redirection selon le rôle ----
+        if ($user->role === 'admin') {
+            return redirect()->route('admin.dashboard');
+        }
+
+        if ($user->role === 'boutiquier') {
+            return redirect()->route('boutiquier.dashboard');
+        }
+
+        return redirect('/');
     }
 
     public function logout()

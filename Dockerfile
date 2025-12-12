@@ -4,7 +4,7 @@ FROM php:8.2-fpm as build
 # 1. Définir le dossier de travail
 WORKDIR /var/www/html
 
-# 2. Installer les dépendances système nécessaires (SANS nginx/supervisor)
+# 2. Installer les dépendances système nécessaires
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Installer les extensions PHP
+# 3. Installer les extensions PHP (pour la Phase 1 uniquement)
 RUN docker-php-ext-install pdo pdo_mysql gd mbstring zip
 
 # 4. Installer Composer (depuis l'image Composer officielle)
@@ -27,15 +27,15 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 # 5. Copier les fichiers Composer pour la mise en cache
 COPY composer.json composer.lock ./
 
-# 6. Installer les dépendances PHP (sans dev)
+# 6. Copier tous les fichiers du projet AVANT d'exécuter composer install.
+COPY . /var/www/html
+
+# 7. Installer les dépendances PHP (sans dev)
 RUN composer install --no-dev --optimize-autoloader
 
-# 7. Installer les dépendances JS
+# 8. Installer les dépendances JS
 COPY package.json package-lock.json ./
 RUN npm install
-
-# 8. Copier tout le code du projet
-COPY . /var/www/html
 
 # 9. Builder les assets JS/CSS
 RUN npm run build
@@ -44,17 +44,29 @@ RUN npm run build
 ## Phase 2 : Finale (Copier uniquement ce qui est nécessaire)
 FROM php:8.2-fpm
 
-# Installer Nginx et Supervisor
+# Correction CRUCIALE : Installer les dépendances système nécessaires
+# pour les extensions et les outils d'exécution (Nginx, Supervisor)
 RUN apt-get update && apt-get install -y \
     nginx \
     supervisor \
+    git \
+    unzip \
+    libzip-dev \
+    libonig-dev \
+    libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
+
+# Correction CRUCIALE : Installer les extensions PHP (y compris pdo_mysql)
+# dans la Phase 2 car c'est l'image qui sert à l'exécution de PHP-FPM.
+RUN docker-php-ext-install pdo pdo_mysql gd mbstring zip
 
 # Définir le dossier de travail
 WORKDIR /var/www/html
 
-# Copier le code depuis l'image de build
+# Copier le code (incluant les vendors installés et assets buildés) depuis l'image de build
 COPY --from=build /var/www/html /var/www/html
 
 # Ajouter les configurations Nginx et Supervisor
@@ -68,6 +80,7 @@ RUN chown -R www-data:www-data /var/www/html/storage \
     && chmod -R 775 /var/www/html/storage \
     && chmod -R 775 /var/www/html/bootstrap/cache
 
+    
 # Exposer le port HTTP
 EXPOSE 80
 

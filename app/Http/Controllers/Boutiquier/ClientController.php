@@ -9,20 +9,35 @@ use Illuminate\Support\Facades\Auth;
 
 class ClientController extends Controller
 {
-    // 1. Liste de tous mes clients
+    /**
+     * 1. Liste des clients (avec totaux)
+     */
     public function index()
     {
-        $clients = Auth::user()->clients()->latest()->get();
+        $clients = Auth::user()->clients()
+            ->withSum(['credits as total_impaye' => function ($q) {
+                $q->where('statut', 'impaye');
+            }], 'montant')
+            ->withSum(['credits as total_paye' => function ($q) {
+                $q->where('statut', 'paye');
+            }], 'montant')
+            ->latest()
+            ->get();
+
         return view('boutiquier.clients.index', compact('clients'));
     }
 
-    // 2. Formulaire création client
+    /**
+     * 2. Formulaire création client
+     */
     public function create()
     {
         return view('boutiquier.clients.create');
     }
 
-    // 3. Enregistrer un nouveau client + génération code CLI-2025-0001
+    /**
+     * 3. Enregistrement client + code unique
+     */
     public function store(Request $request)
     {
         $request->validate([
@@ -31,7 +46,6 @@ class ClientController extends Controller
             'address' => 'nullable|string|max:255',
         ]);
 
-        // Génération du code unique séquentiel
         $count       = Auth::user()->clients()->count() + 1;
         $code_unique = 'CLI-' . date('Y') . '-' . str_pad($count, 4, '0', STR_PAD_LEFT);
 
@@ -48,23 +62,40 @@ class ClientController extends Controller
             ->with('success', "Client créé ! Code : <strong>$code_unique</strong>");
     }
 
-    // 4. Voir tous les crédits d’un client (la méthode qui manquait !)
+    /**
+     * 4. Voir crédits d’un client
+     */
     public function credits($clientId)
     {
         $client = Auth::user()->clients()
-            ->with('credits')
+            ->with('credits') // Charger tous les crédits d’un coup
             ->findOrFail($clientId);
 
-        return view('boutiquier.clients.credits', compact('client'));
+        // Calcul des totaux côté serveur pour la vue
+        $total_impaye  = $client->credits->where('statut', 'impaye')->sum('montant');
+        $total_paye    = $client->credits->where('statut', 'paye')->sum('montant');
+        $total_credit  = $client->credits->sum('montant');
+
+        return view('boutiquier.clients.credits', compact(
+            'client',
+            'total_impaye',
+            'total_paye',
+            'total_credit'
+        ));
     }
 
-    // 5. Éditer un client (optionnel mais utile)
+    /**
+     * 5. Formulaire édition client
+     */
     public function edit($clientId)
     {
         $client = Auth::user()->clients()->findOrFail($clientId);
         return view('boutiquier.clients.edit', compact('client'));
     }
 
+    /**
+     * 6. Mise à jour client
+     */
     public function update(Request $request, $clientId)
     {
         $request->validate([
@@ -81,7 +112,9 @@ class ClientController extends Controller
             ->with('success', 'Client mis à jour avec succès');
     }
 
-    // 6. Supprimer un client
+    /**
+     * 7. Suppression client
+     */
     public function destroy($clientId)
     {
         $client = Auth::user()->clients()->findOrFail($clientId);

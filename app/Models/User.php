@@ -11,28 +11,35 @@ class User extends Authenticatable
     use Notifiable;
 
     protected $fillable = [
-        'name', 'email', 'phone', 'password', 'role', 'status'
+        'name',
+        'email',
+        'phone',
+        'password',
+        'role',
+        'status',
     ];
 
     protected $hidden = [
-        'password'
+        'password',
+        'remember_token',
     ];
 
-    // Mutateur pour hasher automatiquement le mot de passe
+    /**
+     * Mutateur : hash automatique du mot de passe.
+     */
     public function setPasswordAttribute($value)
     {
-        if ($value !== null) {
+        if (!empty($value)) {
             $this->attributes['password'] = Hash::make($value);
         }
     }
 
-    // ✔ Un boutiquier possède plusieurs clients
+    // Relations
     public function clients()
     {
         return $this->hasMany(Client::class, 'boutiquier_id');
     }
 
-    // ✔ Crédits créés par le boutiquier
     public function createdCredits()
     {
         return $this->hasMany(Credit::class, 'created_by');
