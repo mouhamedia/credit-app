@@ -32,8 +32,9 @@ FROM php:8.2-fpm
 WORKDIR /var/www/html
 
 # Installer Nginx, Supervisor et les dépendances nécessaires
+# AJOUT CRITIQUE DE 'libpq-dev' pour la compilation pdo_pgsql dans l'image de production.
 RUN apt-get update && apt-get install -y \
-    nginx supervisor git libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev \
+    nginx supervisor git libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev libpq-dev \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
 # Extensions PHP de production (IMPORTANT : pdo_pgsql pour PostgreSQL)
@@ -44,7 +45,6 @@ COPY --from=build /var/www/html /var/www/html
 
 # CONFIGURATION CRITIQUE : PHP-FPM et Nginx
 # CORRECTION DU CHEMIN PHP-FPM : Utilisation du chemin standard /usr/local/etc/php-fpm.d/www.conf
-# Ceci permet à Nginx et PHP-FPM de communiquer via un socket local.
 RUN sed -i 's/listen = 127.0.0.1:9000/listen = \/var\/run\/php\/php8.2-fpm.sock/g' /usr/local/etc/php-fpm.d/www.conf
 RUN mkdir -p /var/run/php/
 
@@ -61,6 +61,5 @@ RUN chown -R www-data:www-data storage bootstrap/cache \
 # Exposer le port que Nginx écoute
 EXPOSE 8000 
 
-# Commande de Démarrage (Supervisor gère Nginx et PHP-FPM)
-# Ceci démarre Supervisor qui lance Nginx et PHP-FPM en parallèle.
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Commande de Démarrage (CRITIQUE : Lance les migrations puis démarre Supervisor)
+CMD /bin/bash -c "php artisan migrate --force && /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
