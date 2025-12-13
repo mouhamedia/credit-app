@@ -1,65 +1,77 @@
 # -----------------------------
-# Phase 1 : Build (Composer + NPM)
+# Phase 1 : Build (Composer + Yarn pour les assets)
 # -----------------------------
 FROM php:8.2-fpm AS build
 
 WORKDIR /var/www/html
 
-# Installer dépendances système + libpq-dev pour PostgreSQL
+# Dépendances système + Node.js + Yarn
 RUN apt-get update && apt-get install -y \
     git unzip curl libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev libpq-dev nodejs npm \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# Extensions PHP nécessaires (PostgreSQL + Laravel)
-RUN docker-php-ext-install pdo pdo_pgsql mbstring gd zip
+# Extensions PHP
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo pdo_pgsql mbstring gd zip
 
 # Installer Composer
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
-# Copier fichiers Composer et installer dépendances PHP
+# Copier composer files et installer dépendances PHP (sans scripts pour éviter erreur artisan)
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --optimize-autoloader
+RUN composer install --no-dev --optimize-autoloader --prefer-dist --no-progress --no-interaction --no-scripts
 
-# Copier tout le projet Laravel
+# Copier package.json et installer Yarn + dépendances frontend
+COPY package.json package-lock.json ./
+RUN npm install -g yarn \
+    && yarn config set network-timeout 600000 -g \
+    && yarn install --frozen-lockfile
+
+# Copier tout le code source Laravel
 COPY . .
 
-# Installer les dépendances Node et builder les assets front-end
-COPY package.json package-lock.json ./
-RUN npm install && npm run build
+# Builder les assets (Vite ou Laravel Mix)
+RUN yarn build
+
+# Régénérer l'autoload Composer maintenant que tout est copié
+RUN composer dump-autoload --optimize --classmap-authoritative
 
 # -----------------------------
-# Phase 2 : Production
+# Phase 2 : Production (PHP-FPM + Nginx + Supervisor)
 # -----------------------------
 FROM php:8.2-fpm
 
 WORKDIR /var/www/html
 
-# Installer dépendances système + Nginx + Supervisor + libpq-dev
+# Dépendances runtime (Nginx + Supervisor)
 RUN apt-get update && apt-get install -y \
-    nginx supervisor git libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev libpq-dev nodejs npm \
+    nginx supervisor libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev libpq-dev \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# Extensions PHP nécessaires
-RUN docker-php-ext-install pdo pdo_pgsql mbstring gd zip
+# Extensions PHP
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo pdo_pgsql mbstring gd zip
 
-# Copier le projet buildé depuis l'étape 1
+# Forcer PHP-FPM à écouter sur le port 9000 (plus fiable que le socket)
+RUN sed -i 's|listen = /run/php/php8.2-fpm.sock|listen = 9000|g' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's|;listen.owner = www-data|listen.owner = www-data|g' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's|;listen.group = www-data|listen.group = www-data|g' /usr/local/etc/php-fpm.d/www.conf
+
+# Copier tout depuis la phase build
 COPY --from=build /var/www/html /var/www/html
 
 # Permissions Laravel
 RUN chown -R www-data:www-data storage bootstrap/cache \
     && chmod -R 775 storage bootstrap/cache
 
-# Configuration PHP-FPM pour socket Unix
-RUN sed -i 's|listen = 127.0.0.1:9000|listen = /var/run/php/php8.2-fpm.sock|g' /usr/local/etc/php-fpm.d/www.conf
-RUN mkdir -p /var/run/php/
-
-# Copier config Nginx et Supervisor
+# Copier les configurations
 COPY nginx.conf /etc/nginx/sites-available/default
 RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Exposer le port
 EXPOSE 8000
 
-# Commande de démarrage : Supervisor lance PHP-FPM + Nginx
+# Démarrer Supervisor (gère Nginx + PHP-FPM)
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
