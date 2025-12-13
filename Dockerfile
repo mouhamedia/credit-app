@@ -1,31 +1,54 @@
-# -------- Phase 1 : Build (Inchagée, elle est très bien) --------
+# -------- Phase 1 : Build (Construction de l'Application) --------
 FROM php:8.2-fpm AS build
 
 WORKDIR /var/www/html
 
-# ... (Le contenu de la Phase 1 reste identique) ...
+# Dépendances système pour le build (Git, Unzip, outils pour extensions PHP, Node/NPM)
+RUN apt-get update && apt-get install -y \
+    git unzip libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev curl nodejs npm \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# -------- Phase 2 : Production (Adaptée pour Nginx/Supervisor) --------
+# Extensions PHP (AVEC CORRECTION: pdo_pgsql pour PostgreSQL)
+RUN docker-php-ext-install pdo pdo_pgsql mbstring gd zip
+
+# Installer Composer
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+# Copier fichiers Composer + installer les dépendances (sans dev pour la production)
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader
+
+# Copier le projet Laravel
+COPY . .
+
+# Installer npm + builder assets (pour les assets front-end)
+COPY package.json package-lock.json ./
+# Cette étape est souvent la cause de l'échec. Assurez-vous que vos scripts npm fonctionnent.
+RUN npm install && npm run build
+
+
+# -------- Phase 2 : Production (Image Légère pour le Déploiement) --------
 FROM php:8.2-fpm
 
 WORKDIR /var/www/html
 
-# Installer les outils requis
+# Installer Nginx, Supervisor et les dépendances nécessaires
 RUN apt-get update && apt-get install -y \
     nginx supervisor git libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# Installer les extensions PHP de production
-RUN docker-php-ext-install pdo pdo_mysql mbstring gd zip
+# Extensions PHP (AVEC CORRECTION: pdo_pgsql)
+RUN docker-php-ext-install pdo pdo_pgsql mbstring gd zip
 
-# Copier le code + vendor + assets depuis build
+# Copier le code + vendor + assets depuis l'image de build
 COPY --from=build /var/www/html /var/www/html
 
-# Configurer PHP-FPM pour écouter via un socket pour Nginx (par défaut pour php-fpm)
-RUN sed -i 's/listen = 127.0.0.1:9000/listen = \/var\/run\/php\/php8.2-fpm.sock/g' /etc/php/8.2/fpm/pool.d/www.conf 
+# CONFIGURATION CRITIQUE : PHP-FPM et Nginx
+# CORRECTION DU CHEMIN PHP-FPM : Utilisation du chemin standard /usr/local/etc/php-fpm.d/www.conf
+RUN sed -i 's/listen = 127.0.0.1:9000/listen = \/var\/run\/php\/php8.2-fpm.sock/g' /usr/local/etc/php-fpm.d/www.conf
 RUN mkdir -p /var/run/php/
 
-# Config Nginx + Supervisor
+# Config Nginx + Supervisor (les fichiers que vous avez déjà corrigés)
 COPY nginx.conf /etc/nginx/sites-available/default
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
@@ -37,5 +60,5 @@ RUN chown -R www-data:www-data storage bootstrap/cache \
 # Exposer le port que Nginx écoute
 EXPOSE 8000 
 
-# Commande de Démarrage
+# Commande de Démarrage (Supervisor gère Nginx et PHP-FPM)
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
