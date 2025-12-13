@@ -33,7 +33,7 @@ COPY . .
 # Builder les assets (Vite ou Laravel Mix)
 RUN yarn build
 
-# Régénérer l'autoload Composer maintenant que tout est copié
+# Régénérer l'autoload Composer
 RUN composer dump-autoload --optimize --classmap-authoritative
 
 # -----------------------------
@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y \
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install pdo pdo_pgsql mbstring gd zip
 
-# Forcer PHP-FPM à écouter sur le port 9000 (plus fiable que le socket)
+# Forcer PHP-FPM à écouter sur le port 9000
 RUN sed -i 's|listen = /run/php/php8.2-fpm.sock|listen = 9000|g' /usr/local/etc/php-fpm.d/www.conf \
     && sed -i 's|;listen.owner = www-data|listen.owner = www-data|g' /usr/local/etc/php-fpm.d/www.conf \
     && sed -i 's|;listen.group = www-data|listen.group = www-data|g' /usr/local/etc/php-fpm.d/www.conf
@@ -70,8 +70,30 @@ RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Exposer le port
-EXPOSE 8000
+# Créer le script de déploiement (migrations + admin)
+# Remplacer toute l'ancienne section de RUN echo '... /deploy.sh ...'
+# ... par ceci :
 
-# Démarrer Supervisor (gère Nginx + PHP-FPM)
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Créer le script de déploiement (migrations + admin)
+RUN echo '#!/bin/bash\n\
+echo "Exécution des migrations..."\n\
+php artisan migrate --force\n\
+echo "Création/mise à jour de l administrateur..."\n\
+php artisan tinker --execute="\
+# (Le code PHP tinker est le même)\
+# ...
+"' > /deploy.sh && chmod +x /deploy.sh
+
+# --- NOUVEAU ENTRYPOINT PLUS SIMPLE ---
+COPY --chmod=0755 <<'EOF' /entrypoint.sh
+#!/bin/bash
+
+# Exécuter les tâches de déploiement (migrations, admin)
+/deploy.sh
+
+# Démarrer Supervisor en mode non-daemon (premier plan)
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf -n
+EOF
+
+ENTRYPOINT ["/entrypoint.sh"]
+# Supprimez le `wait` et la logique `nc -z` (Supervisor gère déjà le démarrage des processus)
