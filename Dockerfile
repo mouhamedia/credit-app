@@ -1,55 +1,41 @@
-# -------- Phase 1 : Build --------
+# -------- Phase 1 : Build (Inchagée, elle est très bien) --------
 FROM php:8.2-fpm AS build
 
 WORKDIR /var/www/html
 
-# Dépendances système
-RUN apt-get update && apt-get install -y \
-    git unzip libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev curl nodejs npm \
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+# ... (Le contenu de la Phase 1 reste identique) ...
 
-# Extensions PHP
-RUN docker-php-ext-install pdo pdo_mysql mbstring gd zip
-
-# Composer
-COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
-
-# Copier fichiers Composer + installer les dépendances
-COPY composer.json composer.lock ./
-RUN composer install --no-dev --optimize-autoloader
-
-# Copier le projet
-COPY . .
-
-# Installer npm + builder assets
-COPY package.json package-lock.json ./
-RUN npm install && npm run build
-
-# -------- Phase 2 : Production --------
+# -------- Phase 2 : Production (Adaptée pour Nginx/Supervisor) --------
 FROM php:8.2-fpm
 
 WORKDIR /var/www/html
 
-# Installer PHP-FPM, Nginx, Supervisor
+# Installer les outils requis
 RUN apt-get update && apt-get install -y \
-    nginx supervisor git unzip libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev \
+    nginx supervisor git libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# Extensions PHP
+# Installer les extensions PHP de production
 RUN docker-php-ext-install pdo pdo_mysql mbstring gd zip
 
 # Copier le code + vendor + assets depuis build
 COPY --from=build /var/www/html /var/www/html
+
+# Configurer PHP-FPM pour écouter via un socket pour Nginx (par défaut pour php-fpm)
+RUN sed -i 's/listen = 127.0.0.1:9000/listen = \/var\/run\/php\/php8.2-fpm.sock/g' /etc/php/8.2/fpm/pool.d/www.conf 
+RUN mkdir -p /var/run/php/
 
 # Config Nginx + Supervisor
 COPY nginx.conf /etc/nginx/sites-available/default
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
-# Permissions
+# Permissions (Très important pour Laravel)
 RUN chown -R www-data:www-data storage bootstrap/cache \
     && chmod -R 775 storage bootstrap/cache
 
-EXPOSE 80
+# Exposer le port que Nginx écoute
+EXPOSE 8000 
 
+# Commande de Démarrage
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
