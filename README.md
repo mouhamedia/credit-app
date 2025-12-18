@@ -128,3 +128,7 @@ credit-app/
 ├── .env
 ├── composer.json
 └── README.md
+
+
+Email : admin@gmail.com
+Mot de passe : admin123

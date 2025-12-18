@@ -1,0 +1,50 @@
+services:
+  app:
+    build: .
+    container_name: credit_app
+    restart: always
+    volumes:
+      - .:/var/www/html
+    environment:
+      - DB_CONNECTION=pgsql
+      - DB_HOST=credit_db
+      - DB_PORT=5432
+      - DB_DATABASE=creditapp_prod
+      - DB_USERNAME=creditapp_user
+      - DB_PASSWORD=STRONG_PASSWORD
+      - DB_SSLMODE=disable
+    networks:
+      - credit_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: credit_nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - .:/var/www/html
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+    networks:
+      - credit_net
+
+  db:
+    image: postgres:15
+    container_name: credit_db
+    restart: always
+    environment:
+      POSTGRES_DB: creditapp_prod
+      POSTGRES_USER: creditapp_user
+      POSTGRES_PASSWORD: STRONG_PASSWORD
+    volumes:
+      - credit_pgdata:/var/lib/postgresql/data
+    networks:
+      - credit_net
+
+networks:
+  credit_net:
+
+volumes:
+  credit_pgdata:
